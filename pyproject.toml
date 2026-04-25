@@ -31,9 +31,9 @@ dev = [
 [project.scripts]
 # Server entry point - enables running via: uv run --project . server
 # or: python -m sre_bench.server.app
-server = "sre_bench.server.app:main"
+server = "server.app:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = ["sre_bench", "sre_bench.server"]
-package-dir = { "sre_bench" = "sre_bench" }
+packages = ["sre_bench"]
+package-dir = { "" = "." }
