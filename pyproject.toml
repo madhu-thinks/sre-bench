@@ -36,4 +36,4 @@ server = "sre_bench.server.app:main"
 [tool.setuptools]
 include-package-data = true
 packages = ["sre_bench", "sre_bench.server"]
-package-dir = { "sre_bench" = ".", "sre_bench.server" = "server" }
+package-dir = { "sre_bench" = "sre_bench" }
