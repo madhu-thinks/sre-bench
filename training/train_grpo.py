@@ -54,6 +54,7 @@ global_rollout_counter = 0
 global_last_difficulty = None
 global_metric_sums = defaultdict(float)
 global_metric_counts = defaultdict(int)
+global_outcome_counts = defaultdict(int)
 METRICS_LOG_PATH = "sre_bench_grpo_outputs/rollout_metrics.jsonl"
 
 # Prompt Template instructing the model how to output tools
@@ -165,11 +166,31 @@ def generate_trajectory(model, tokenizer, prompt_text: str, difficulty: str = "h
             chat_history.append({"role": "user", "content": obs.tool_output})
             step += 1
             
+        resolved = "=== INCIDENT RESOLVED ===" in obs.tool_output
+        timed_out = "STEP BUDGET EXHAUSTED" in obs.tool_output
+        successful = bool(obs.scores and obs.scores.get("root_cause_accuracy", 0.0) >= 1.0 and not timed_out)
+
         # Return reward and scores for monitoring
         if hasattr(obs, 'scores') and obs.scores:
-            return {"reward": total_reward, "scores": obs.scores, "difficulty": difficulty}
+            return {
+                "reward": total_reward,
+                "scores": obs.scores,
+                "difficulty": difficulty,
+                "resolved": resolved,
+                "timed_out": timed_out,
+                "successful": successful,
+                "steps": step,
+            }
         else:
-            return {"reward": total_reward, "scores": {}, "difficulty": difficulty}
+            return {
+                "reward": total_reward,
+                "scores": {},
+                "difficulty": difficulty,
+                "resolved": resolved,
+                "timed_out": timed_out,
+                "successful": successful,
+                "steps": step,
+            }
 
 # -----------------------------------------------------------------------
 # GRPO Reward Function Wrapper
@@ -184,7 +205,7 @@ def env_reward_func(prompts, completions, **kwargs):
      This acts as a synchronous bridge, instantiating the env per rollout).
     """
     global global_model, global_tokenizer, global_rollout_counter, global_last_difficulty
-    global global_metric_sums, global_metric_counts
+    global global_metric_sums, global_metric_counts, global_outcome_counts
     
     rewards = []
     for i, (prompt, comp) in enumerate(zip(prompts, completions)):
@@ -203,13 +224,21 @@ def env_reward_func(prompts, completions, **kwargs):
         result = generate_trajectory(global_model, global_tokenizer, prompt, difficulty=difficulty)
         r = result["reward"]
         scores = result["scores"]
+        resolved = result["resolved"]
+        timed_out = result["timed_out"]
+        successful = result["successful"]
+        steps = result["steps"]
         rewards.append(r)
-
+        
         metric_row = {
             "rollout": rollout_index + 1,
             "difficulty": difficulty,
             "reward": r,
             "scores": scores,
+            "resolved": resolved,
+            "timed_out": timed_out,
+            "successful": successful,
+            "steps": steps,
         }
         with open(METRICS_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(metric_row) + "\n")
@@ -219,12 +248,19 @@ def env_reward_func(prompts, completions, **kwargs):
         for score_name, score_value in scores.items():
             global_metric_sums[score_name] += float(score_value)
             global_metric_counts[score_name] += 1
+        global_outcome_counts["episodes"] += 1
+        global_outcome_counts["resolved"] += int(resolved)
+        global_outcome_counts["timed_out"] += int(timed_out)
+        global_outcome_counts["successful"] += int(successful)
+        global_metric_sums["steps"] += float(steps)
+        global_metric_counts["steps"] += 1
         
         # Log detailed metrics and sample generations every 10 episodes
         if i % 10 == 0:
             print(
                 f"Episode {i} | Rollout {rollout_index + 1} | "
-                f"Difficulty={difficulty} | Reward={r:.4f}"
+                f"Difficulty={difficulty} | Reward={r:.4f} | "
+                f"Resolved={resolved} | Successful={successful} | Timeout={timed_out} | Steps={steps}"
             )
             if scores:
                 print(f"  Scores: {scores}")
@@ -235,6 +271,14 @@ def env_reward_func(prompts, completions, **kwargs):
         if (rollout_index + 1) % 20 == 0:
             avg_reward = global_metric_sums["reward"] / max(1, global_metric_counts["reward"])
             print(f"[Metrics] Avg Reward after {rollout_index + 1} rollouts: {avg_reward:.4f}")
+            avg_steps = global_metric_sums["steps"] / max(1, global_metric_counts["steps"])
+            success_rate = global_outcome_counts["resolved"] / max(1, global_outcome_counts["episodes"])
+            true_success_rate = global_outcome_counts["successful"] / max(1, global_outcome_counts["episodes"])
+            timeout_rate = global_outcome_counts["timed_out"] / max(1, global_outcome_counts["episodes"])
+            print(f"  [Metrics] Avg steps: {avg_steps:.2f}")
+            print(f"  [Metrics] Resolve-called rate: {success_rate:.2%}")
+            print(f"  [Metrics] Correct-resolution rate: {true_success_rate:.2%}")
+            print(f"  [Metrics] Timeout rate: {timeout_rate:.2%}")
             for score_name in [
                 "root_cause_accuracy",
                 "time_to_resolution",
@@ -276,13 +320,14 @@ def main():
     # Expose globally for the reward function to access 
     # (Hacky but works well in standard notebook/script workflows)
     global global_model, global_tokenizer, global_rollout_counter, global_last_difficulty
-    global global_metric_sums, global_metric_counts
+    global global_metric_sums, global_metric_counts, global_outcome_counts
     global_model = model
     global_tokenizer = tokenizer
     global_rollout_counter = 0
     global_last_difficulty = None
     global_metric_sums = defaultdict(float)
     global_metric_counts = defaultdict(int)
+    global_outcome_counts = defaultdict(int)
     os.makedirs(os.path.dirname(METRICS_LOG_PATH), exist_ok=True)
     with open(METRICS_LOG_PATH, "w", encoding="utf-8") as f:
         f.write("")

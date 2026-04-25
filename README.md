@@ -63,6 +63,24 @@ We provide a plug-and-play Colab training script optimized for T4 GPUs.
 2. Load the `training/train_grpo.py` script.
 3. It uses `Unsloth` to load a 3B model in 4-bit, and uses `TRL GRPOTrainer` to sample trajectories from the running SRE-Bench server, optimizing for our 5-part rubric.
 
+### 3. Baseline vs Trained Evaluation
+Generate a judge-friendly before/after report with objective metrics:
+
+```bash
+python training/evaluate_baseline_vs_trained.py \
+  --env_url http://localhost:8000 \
+  --episodes 25 \
+  --model_path ./sre_bench_final_model
+```
+
+Outputs:
+- `sre_bench_grpo_outputs/baseline_vs_trained_eval.json`
+- `sre_bench_grpo_outputs/baseline_vs_trained_eval.md`
+
+### 4. Hackathon Ops Docs
+- Execution plan and team split: `docs/HACKATHON_EXECUTION_PLAN.md`
+- Anti reward-hacking checklist: `docs/ANTI_REWARD_HACKING.md`
+
 ---
 
 ## 🧩 The 11 SRE Tools

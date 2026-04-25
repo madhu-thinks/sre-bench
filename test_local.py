@@ -130,6 +130,43 @@ def test_curriculum_easy():
             break
 
 
+def test_reset_difficulty_override():
+    divider("EDGE CASE - Reset Difficulty Override")
+    env = SreBenchEnvironment(difficulty="hard")
+    obs = env.reset(difficulty="easy")
+    assert "Difficulty: easy" in obs.tool_output, "Reset override should be reflected in observation text"
+    print("[PASS] reset(difficulty='easy') override applied correctly")
+
+
+def test_blast_radius_penalty():
+    divider("ANTI-HACK TEST - Blast Radius Penalty")
+    env = SreBenchEnvironment(difficulty="easy")
+    env.reset()
+
+    # Intentionally harmful action on a likely healthy service.
+    env.step(
+        SreBenchAction(
+            tool_name="restart_service",
+            arguments={"service": "frontend"},
+            hypothesis="Forcing an unnecessary restart",
+        )
+    )
+    final = env.step(
+        SreBenchAction(
+            tool_name="resolve_incident",
+            arguments={
+                "root_cause": "unknown",
+                "fix_applied": "restarted frontend",
+            },
+        )
+    )
+    assert final.done, "Episode should terminate on resolve_incident"
+    assert final.scores is not None, "Rubric scores should be present at episode end"
+    blast = final.scores.get("blast_radius_control")
+    assert blast is not None and blast < 1.0, "Harmful action must reduce blast radius score"
+    print(f"[PASS] harmful action penalized, blast_radius_control={blast:.3f}")
+
+
 if __name__ == "__main__":
     print("\n*** SRE-Bench Local Smoke Test ***")
     try:
@@ -138,6 +175,8 @@ if __name__ == "__main__":
         test_invalid_tool()
         test_budget_exhaustion()
         test_curriculum_easy()
+        test_reset_difficulty_override()
+        test_blast_radius_penalty()
         print("\n[OK] ALL TESTS PASSED - Environment is working correctly.")
     except Exception as e:
         import traceback
