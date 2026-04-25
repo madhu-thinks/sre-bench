@@ -1,0 +1,23 @@
+spec_version: 1
+name: sre_bench
+display_name: "SRE-Bench: Production Incident Training Environment"
+description: >
+  Train LLM agents to triage, investigate, and resolve production incidents
+  like a senior SRE — with noisy logs, cascading failures, and real tool calls.
+  Features 8 fault types, 7-service microservice cluster, and a 5-component
+  composable reward rubric (root cause, time-to-resolution, hypothesis quality,
+  blast radius control, postmortem quality).
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8000
+tags:
+  - sre
+  - incident-response
+  - long-horizon
+  - partial-observability
+  - tool-use
+  - rl-training
+themes:
+  - "2"
+  - "3.1"
