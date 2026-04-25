@@ -135,7 +135,11 @@ def generate_trajectory(model, tokenizer, prompt_text: str) -> float:
             chat_history.append({"role": "user", "content": obs.tool_output})
             step += 1
             
-        return total_reward
+        # Return reward and scores for monitoring
+        if hasattr(obs, 'scores') and obs.scores:
+            return {"reward": total_reward, "scores": obs.scores}
+        else:
+            return {"reward": total_reward, "scores": {}}
 
 # -----------------------------------------------------------------------
 # GRPO Reward Function Wrapper
@@ -152,10 +156,22 @@ def env_reward_func(prompts, completions, **kwargs):
     global global_model, global_tokenizer
     
     rewards = []
-    for prompt, comp in zip(prompts, completions):
+    for i, (prompt, comp) in enumerate(zip(prompts, completions)):
         # We start an episode with the prompt as the initial alert (mocking actual rollout)
-        r = generate_trajectory(global_model, global_tokenizer, prompt)
+        result = generate_trajectory(global_model, global_tokenizer, prompt)
+        r = result["reward"]
+        scores = result["scores"]
         rewards.append(r)
+        
+        # Log detailed metrics and sample generations every 10 episodes
+        if i % 10 == 0:
+            print(f"Episode {i}: Reward={r:.4f}")
+            if scores:
+                print(f"  Scores: {scores}")
+            # Log a sample completion (first 200 chars)
+            comp_text = comp[0] if isinstance(comp, list) else str(comp)
+            print(f"  Sample Generation: {comp_text[:200]}...")
+    
     return rewards
 
 # -----------------------------------------------------------------------
@@ -224,7 +240,8 @@ def main():
     trainer.train()
     
     print("\nSaving final model...")
-    model.save_pretrained("sre_bench_final_model")
+    # For 4-bit LoRA models, merge properly to avoid quality loss
+    model.save_pretrained_merged("sre_bench_final_model", tokenizer, save_method="merged_16bit")
     tokenizer.save_pretrained("sre_bench_final_model")
     print("Done!")
 

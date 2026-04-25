@@ -60,6 +60,18 @@ class FaultType(str, Enum):
     MEMORY_LEAK               = "memory_leak"              # Gradual degradation
 
 
+# Difficulty levels for curriculum learning
+class Difficulty(str, Enum):
+    EASY = "easy"      # Obvious faults, no cascading
+    MEDIUM = "medium"  # Faults with cascading effects
+    HARD = "hard"      # All faults, full complexity
+
+# Faults by difficulty
+EASY_FAULTS = {FaultType.DISK_FULL, FaultType.CONFIG_MISSING_ENV}
+MEDIUM_FAULTS = {FaultType.OOM_KILLED, FaultType.CPU_THROTTLE, FaultType.MEMORY_LEAK}
+HARD_FAULTS = {FaultType.DB_CONNECTION_EXHAUSTION, FaultType.NETWORK_PARTITION, FaultType.RETRY_STORM}
+
+
 # Which service is the *primary* victim for each fault type.
 FAULT_PRIMARY_SERVICE: Dict[FaultType, str] = {
     FaultType.DB_CONNECTION_EXHAUSTION: "database",
@@ -255,12 +267,27 @@ class SREEngine:
     # Public API
     # ------------------------------------------------------------------
 
-    def new_episode(self, fault_type: Optional[FaultType] = None) -> ClusterState:
+    def new_episode(self, fault_type: Optional[FaultType] = None, difficulty: Difficulty = Difficulty.HARD) -> ClusterState:
         """Create a new episode with a fresh cluster and injected fault."""
         cluster = self._build_healthy_cluster()
-        chosen_fault = fault_type or random.choice(list(FaultType))
+        
+        # Select fault based on difficulty if not specified
+        if fault_type is None:
+            if difficulty == Difficulty.EASY:
+                chosen_fault = random.choice(list(EASY_FAULTS))
+            elif difficulty == Difficulty.MEDIUM:
+                chosen_fault = random.choice(list(MEDIUM_FAULTS))
+            else:  # HARD
+                chosen_fault = random.choice(list(FaultType))
+        else:
+            chosen_fault = fault_type
+            
         self._inject_fault(cluster, chosen_fault)
-        self._propagate_cascade(cluster)
+        
+        # Apply cascading based on difficulty
+        if difficulty != Difficulty.EASY:
+            self._propagate_cascade(cluster)
+            
         cluster.incident_id = f"INC-{int(time.time()) % 100000:05d}"
         cluster.alert_fired = FAULT_ALERT_MESSAGES[chosen_fault]
         self._cluster = cluster

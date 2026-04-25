@@ -19,6 +19,9 @@ Reward rubric (5 components):
   5. Postmortem Quality   (0.10) - coherence of final explanation
 """
 
+import os
+import json
+import httpx
 import re
 from typing import Optional
 from uuid import uuid4
@@ -110,9 +113,9 @@ class RubricScorer:
     WEIGHTS = {
         "root_cause_accuracy":  0.30,
         "time_to_resolution":   0.25,
-        "hypothesis_quality":   0.20,
+        "hypothesis_quality":   0.15,
         "blast_radius_control": 0.15,
-        "postmortem_quality":   0.10,
+        "postmortem_quality":   0.15,  # Increased weight for LLM-judged PM
     }
 
     def __init__(self):
@@ -120,6 +123,49 @@ class RubricScorer:
         self.hypothesis_log: dict = {}
         # Blast radius tracker: list of (service, was_harmful)
         self.action_log: list = []
+        self.hf_token = os.getenv("HF_TOKEN")
+        self.api_base = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+        self.model_name = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-7B-Instruct")
+
+    def _run_llm_grader(self, root_cause: str, fix: str, actual_fault: str, actual_service: str) -> float:
+        """Connects to HF Router to grade the postmortem explanation."""
+        if not self.hf_token:
+            return 0.5  # Neutral fallback if no token
+
+        prompt = f"""You are an expert SRE Auditor. Grade the quality of an incident postmortem.
+Actual Incident: The service '{actual_service}' suffered a '{actual_fault}'.
+Agent Explanation: 
+- Root Cause: {root_cause}
+- Fix Applied: {fix}
+
+Score the explanation from 0.0 to 1.0 based on:
+1. Accuracy: Did they identify the correct fault and service?
+2. Technical Depth: Is the explanation coherent?
+3. Resolution: Does the fix actually solve that specific fault?
+
+Output ONLY a JSON object: {{"score": float, "reasoning": "brief string"}}
+"""
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.post(
+                    f"{self.api_base}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.hf_token}"},
+                    json={
+                        "model": self.model_name,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.1
+                    }
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    content = data['choices'][0]['message']['content']
+                    match = re.search(r'\{.*\}', content, re.DOTALL)
+                    if match:
+                        result = json.loads(match.group())
+                        return float(result.get("score", 0.5))
+        except Exception:
+            pass
+        return 0.5
 
     def log_hypothesis(self, step: int, hypothesis: Optional[str]):
         if hypothesis:
@@ -193,21 +239,23 @@ class RubricScorer:
             harm_ratio = harmful_actions / total_fix_actions
             scores["blast_radius_control"] = max(0.0, 1.0 - harm_ratio)
 
-        # ── 5. Postmortem Quality (10%) ────────────────────────────────────
-        # Heuristic: does the declared fix mention both the fault and the service?
+        # ── 5. Postmortem Quality (15%) ────────────────────────────────────
+        # Use LLM Judge (matches Priority_panic standard)
+        llm_score = self._run_llm_grader(
+            declared_root_cause, declared_fix, actual_fault.value, actual_service
+        )
+        
+        # Combine LLM judge with heuristic fallback
         postmortem_text = f"{declared_root_cause} {declared_fix}".lower()
         has_fault_ref = any(
             alias in postmortem_text
             for alias in ROOT_CAUSE_ALIASES.get(actual_fault, [actual_fault.value])
         )
         has_service_ref = actual_service.lower() in postmortem_text
-        has_action_ref = any(
-            kw in postmortem_text
-            for kw in ["rollback", "restart", "scale", "clear", "fix", "restored",
-                       "patched", "resolved", "mitigated"]
-        )
-        pm_score = (has_fault_ref + has_service_ref + has_action_ref) / 3
-        scores["postmortem_quality"] = pm_score
+        heuristic_score = (has_fault_ref + has_service_ref) / 2
+        
+        # LLM score is weighted 80%, heuristic fallback 20%
+        scores["postmortem_quality"] = (llm_score * 0.8) + (heuristic_score * 0.2)
 
         # ── Final weighted reward ──────────────────────────────────────────
         final_reward = sum(
@@ -235,7 +283,9 @@ class SreBenchEnvironment(Environment):
 
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
 
-    def __init__(self):
+    def __init__(self, difficulty: str = "hard"):
+        from .sre_engine import Difficulty
+        self._difficulty = Difficulty(difficulty.lower())
         self._engine = SREEngine()
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._scorer = RubricScorer()
@@ -253,7 +303,7 @@ class SreBenchEnvironment(Environment):
         Injects a random fault into the cluster and returns the firing alert.
         The agent does NOT know which fault was injected — it must investigate.
         """
-        cluster = self._engine.new_episode()
+        cluster = self._engine.new_episode(difficulty=self._difficulty)
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._scorer = RubricScorer()
         self._alert = cluster.alert_fired

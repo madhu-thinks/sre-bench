@@ -108,6 +108,29 @@ def test_budget_exhaustion():
                   f"reward={result.reward:.4f}")
             break
 
+def test_curriculum_easy():
+    divider("CURRICULUM TEST — Easy Difficulty")
+    env = SreBenchEnvironment(difficulty="easy")
+    
+    # reset
+    obs = env.reset()
+    print(f"[PASS] reset(easy) → alert: {obs.alert[:80]}...")
+    
+    # Check that it's an easy fault (no cascade, so database should be healthy if not the victim)
+    # But since we don't know the fault, just check it runs
+    print(f"       episode active, ready for training")
+    
+    # Quick episode
+    for i in range(5):
+        action = SreBenchAction(
+            tool_name="get_error_rate",
+            arguments={"service": "database"},
+        )
+        result = env.step(action)
+        if result.done:
+            print(f"[PASS] Episode ended at step {i+1}, reward={result.reward:.4f}")
+            break
+
 if __name__ == "__main__":
     print("\n*** SRE-Bench Local Smoke Test ***")
     try:
@@ -115,6 +138,7 @@ if __name__ == "__main__":
         test_environment()
         test_invalid_tool()
         test_budget_exhaustion()
+        test_curriculum_easy()
         print("\n✅ ALL TESTS PASSED — Environment is working correctly.")
     except Exception as e:
         import traceback

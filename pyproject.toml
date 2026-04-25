@@ -20,6 +20,7 @@ dependencies = [
     "openenv-core[core]>=0.2.2",
     # Environment-specific dependencies
     "pydantic>=2.0.0",
+    "httpx>=0.27.0",
 ]
 
 [project.optional-dependencies]
@@ -35,5 +36,5 @@ server = "server.app:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = ["sre_bench"]
+# packages = ["sre_bench"]  # Removed to auto-discover
 package-dir = { "" = "." }

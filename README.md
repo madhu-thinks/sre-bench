@@ -74,9 +74,9 @@ The agent interacts with the environment exclusively through these tools:
 | :--- | :--- | :--- |
 | **Root Cause** | 30% | Exact match on injected fault + targeting the correct origin service. |
 | **Time** | 25% | Max step budget is 20. Bonus applied for resolution under 8 steps. |
-| **Hypothesis** | 20% | Agent's `<hypothesis>` tag at steps 3 & 6 is evaluated for trajectory correctness. |
-| **Blast Radius** | 15% | Agent loses points if it takes destructive actions (e.g. rollbacks) on healthy services. |
-| **Postmortem** | 10% | Semantic check of the final root cause + fix text for coherence. |
+| **Hypothesis** | 15% | Agent's `<hypothesis>` tag at steps 3 & 6 is evaluated for trajectory correctness. |
+| **Blast Radius** | 15% | Agent loses points if it takes destructive actions on healthy services. |
+| **Postmortem** | 15% | **LLM-as-a-Judge**: A Qwen-2.5-7B model evaluates the quality, depth, and accuracy of the report. |
 
 ---
 
