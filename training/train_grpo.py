@@ -15,15 +15,19 @@ Setup in Colab:
 
 import os
 import re
-import yaml
 import json
+from collections import defaultdict
 import torch
 from unsloth import FastLanguageModel, PatchDPOTrainer
 from unsloth import is_bfloat16_supported
 from trl import GRPOConfig, GRPOTrainer
 from datasets import Dataset
 
-from sre_bench import SreBenchEnv, SreBenchAction
+try:
+    from sre_bench import SreBenchEnv, SreBenchAction
+except ImportError:
+    from client import SreBenchEnv
+    from models import SreBenchAction
 
 # Patch TRL for Unsloth optimizations
 PatchDPOTrainer()
@@ -35,6 +39,22 @@ MODEL_NAME = "unsloth/Qwen2.5-3B-Instruct"  # Fast, highly capable small model
 MAX_SEQ_LENGTH = 4096
 LORA_RANK = 16
 ENV_URL = "http://localhost:8000"  # Requires FastAPI server running
+TRAIN_MAX_STEPS = 50
+NUM_GENERATIONS = 4
+TOTAL_CURRICULUM_ROLLOUTS = TRAIN_MAX_STEPS * NUM_GENERATIONS
+# Rollout-based curriculum progression.
+# 0-30%: easy, 30-70%: medium, 70-100%: hard.
+CURRICULUM_STAGES = (
+    ("easy", 0.30),
+    ("medium", 0.70),
+    ("hard", 1.00),
+)
+
+global_rollout_counter = 0
+global_last_difficulty = None
+global_metric_sums = defaultdict(float)
+global_metric_counts = defaultdict(int)
+METRICS_LOG_PATH = "sre_bench_grpo_outputs/rollout_metrics.jsonl"
 
 # Prompt Template instructing the model how to output tools
 SYSTEM_PROMPT = """You are a Senior Site Reliability Engineer tackling a live production incident.
@@ -85,13 +105,23 @@ def parse_action_from_text(text: str) -> SreBenchAction:
         )
 
 
-def generate_trajectory(model, tokenizer, prompt_text: str) -> float:
+def get_curriculum_difficulty(rollout_index: int) -> str:
+    """Return curriculum difficulty for a given rollout index."""
+    progress = (rollout_index + 1) / max(1, TOTAL_CURRICULUM_ROLLOUTS)
+    for difficulty, threshold in CURRICULUM_STAGES:
+        if progress <= threshold:
+            return difficulty
+    return "hard"
+
+
+def generate_trajectory(model, tokenizer, prompt_text: str, difficulty: str = "hard") -> dict:
     """
     Rolls out a full episode in SRE-Bench using the model.
     Returns the final environment reward.
     """
     with SreBenchEnv(base_url=ENV_URL).sync() as env:
-        result = env.reset()
+        # reset(**kwargs) is supported by OpenEnv clients and enables curriculum control.
+        result = env.reset(difficulty=difficulty)
         obs = result.observation
         
         chat_history = [
@@ -137,9 +167,9 @@ def generate_trajectory(model, tokenizer, prompt_text: str) -> float:
             
         # Return reward and scores for monitoring
         if hasattr(obs, 'scores') and obs.scores:
-            return {"reward": total_reward, "scores": obs.scores}
+            return {"reward": total_reward, "scores": obs.scores, "difficulty": difficulty}
         else:
-            return {"reward": total_reward, "scores": {}}
+            return {"reward": total_reward, "scores": {}, "difficulty": difficulty}
 
 # -----------------------------------------------------------------------
 # GRPO Reward Function Wrapper
@@ -153,24 +183,68 @@ def env_reward_func(prompts, completions, **kwargs):
     (Note: True GRPO typically requires online sampling inside the trainer loop. 
      This acts as a synchronous bridge, instantiating the env per rollout).
     """
-    global global_model, global_tokenizer
+    global global_model, global_tokenizer, global_rollout_counter, global_last_difficulty
+    global global_metric_sums, global_metric_counts
     
     rewards = []
     for i, (prompt, comp) in enumerate(zip(prompts, completions)):
+        rollout_index = global_rollout_counter
+        difficulty = get_curriculum_difficulty(rollout_index)
+        if difficulty != global_last_difficulty:
+            print(
+                f"[Curriculum] Switching to {difficulty.upper()} "
+                f"at rollout {rollout_index + 1}/{TOTAL_CURRICULUM_ROLLOUTS}"
+            )
+            global_last_difficulty = difficulty
+
+        global_rollout_counter += 1
+
         # We start an episode with the prompt as the initial alert (mocking actual rollout)
-        result = generate_trajectory(global_model, global_tokenizer, prompt)
+        result = generate_trajectory(global_model, global_tokenizer, prompt, difficulty=difficulty)
         r = result["reward"]
         scores = result["scores"]
         rewards.append(r)
+
+        metric_row = {
+            "rollout": rollout_index + 1,
+            "difficulty": difficulty,
+            "reward": r,
+            "scores": scores,
+        }
+        with open(METRICS_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(metric_row) + "\n")
+
+        global_metric_sums["reward"] += r
+        global_metric_counts["reward"] += 1
+        for score_name, score_value in scores.items():
+            global_metric_sums[score_name] += float(score_value)
+            global_metric_counts[score_name] += 1
         
         # Log detailed metrics and sample generations every 10 episodes
         if i % 10 == 0:
-            print(f"Episode {i}: Reward={r:.4f}")
+            print(
+                f"Episode {i} | Rollout {rollout_index + 1} | "
+                f"Difficulty={difficulty} | Reward={r:.4f}"
+            )
             if scores:
                 print(f"  Scores: {scores}")
             # Log a sample completion (first 200 chars)
             comp_text = comp[0] if isinstance(comp, list) else str(comp)
             print(f"  Sample Generation: {comp_text[:200]}...")
+
+        if (rollout_index + 1) % 20 == 0:
+            avg_reward = global_metric_sums["reward"] / max(1, global_metric_counts["reward"])
+            print(f"[Metrics] Avg Reward after {rollout_index + 1} rollouts: {avg_reward:.4f}")
+            for score_name in [
+                "root_cause_accuracy",
+                "time_to_resolution",
+                "hypothesis_quality",
+                "blast_radius_control",
+                "postmortem_quality",
+            ]:
+                if global_metric_counts[score_name]:
+                    avg_score = global_metric_sums[score_name] / global_metric_counts[score_name]
+                    print(f"  [Metrics] Avg {score_name}: {avg_score:.4f}")
     
     return rewards
 
@@ -201,9 +275,17 @@ def main():
     
     # Expose globally for the reward function to access 
     # (Hacky but works well in standard notebook/script workflows)
-    global global_model, global_tokenizer
+    global global_model, global_tokenizer, global_rollout_counter, global_last_difficulty
+    global global_metric_sums, global_metric_counts
     global_model = model
     global_tokenizer = tokenizer
+    global_rollout_counter = 0
+    global_last_difficulty = None
+    global_metric_sums = defaultdict(float)
+    global_metric_counts = defaultdict(int)
+    os.makedirs(os.path.dirname(METRICS_LOG_PATH), exist_ok=True)
+    with open(METRICS_LOG_PATH, "w", encoding="utf-8") as f:
+        f.write("")
     
     # Create Dummy Prompts Dataset. 
     # In SRE-Bench, reset() gives a random fault, so the prompt is just "Start Episode".
@@ -216,10 +298,10 @@ def main():
         learning_rate=5e-6,
         lr_scheduler_type="cosine",
         logging_steps=1,
-        max_steps=50,
+        max_steps=TRAIN_MAX_STEPS,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
-        num_generations=4, # Group size for GRPO
+        num_generations=NUM_GENERATIONS, # Group size for GRPO
         max_prompt_length=512,
         max_completion_length=1024, # Needs room for CoT + XML
         bf16=is_bfloat16_supported(),

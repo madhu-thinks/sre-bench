@@ -296,14 +296,23 @@ class SreBenchEnvironment(Environment):
     # OpenEnv API
     # ─────────────────────────────────────────────────────────────────────
 
-    def reset(self) -> SreBenchObservation:
+    def reset(self, difficulty: Optional[str] = None) -> SreBenchObservation:
         """
         Start a fresh episode.
 
         Injects a random fault into the cluster and returns the firing alert.
         The agent does NOT know which fault was injected — it must investigate.
         """
-        cluster = self._engine.new_episode(difficulty=self._difficulty)
+        from .sre_engine import Difficulty
+
+        episode_difficulty = self._difficulty
+        if difficulty:
+            try:
+                episode_difficulty = Difficulty(difficulty.lower())
+            except ValueError:
+                episode_difficulty = self._difficulty
+
+        cluster = self._engine.new_episode(difficulty=episode_difficulty)
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._scorer = RubricScorer()
         self._alert = cluster.alert_fired
@@ -313,6 +322,7 @@ class SreBenchEnvironment(Environment):
             tool_output=(
                 f"=== INCIDENT RESPONSE INITIATED ===\n"
                 f"Incident ID: {cluster.incident_id}\n"
+                f"Difficulty: {episode_difficulty.value}\n"
                 f"Alert: {cluster.alert_fired}\n\n"
                 f"Available services: {', '.join(SERVICES)}\n\n"
                 f"Available tools:\n"

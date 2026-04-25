@@ -1,3 +1,9 @@
+---
+title: SRE-Bench
+sdk: docker
+app_port: 8000
+---
+
 # 🚨 SRE-Bench: Production Incident Training Environment
 
 **A high-fidelity, long-horizon reinforcement learning environment for training Senior SRE Agents.**

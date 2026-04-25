@@ -38,7 +38,8 @@ except Exception as e:  # pragma: no cover
 try:
     from ..models import SreBenchAction, SreBenchObservation
     from .sre_bench_environment import SreBenchEnvironment
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):
+    # Fallback for flat-repo execution (e.g., `uvicorn server.app:app`)
     from models import SreBenchAction, SreBenchObservation
     from server.sre_bench_environment import SreBenchEnvironment
 

@@ -12,7 +12,11 @@ import re
 import json
 import torch
 from unsloth import FastLanguageModel
-from sre_bench import SreBenchEnv, SreBenchAction
+try:
+    from sre_bench import SreBenchEnv, SreBenchAction
+except ImportError:
+    from client import SreBenchEnv
+    from models import SreBenchAction
 
 # ---------------------------------------------------------------------------
 # Logic to parse the agent's XML tool call
