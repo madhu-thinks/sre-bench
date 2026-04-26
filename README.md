@@ -79,8 +79,7 @@ uv run --project . server
 ### 2. Training with Unsloth & GRPO (Google Colab)
 We provide a plug-and-play Colab training script optimized for T4 GPUs.
 
-1. Open [Google Colab](https://colab.research.google.com)
-2. Load the `training/train_grpo.py` script.
+1. Open the **[SRE-Bench Training Script in Google Colab](https://colab.research.google.com/github/madhu-thinks/sre-bench/blob/main/training/train_grpo.py)** (This will load the script directly).
 3. It uses `Unsloth` to load a 3B model in 4-bit, and uses `TRL GRPOTrainer` to sample trajectories from the running SRE-Bench server, optimizing for our 5-part rubric.
 
 ### 3. Baseline vs Trained Evaluation
