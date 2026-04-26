@@ -1,4 +1,4 @@
-﻿---
+---
 title: SRE-Bench
 sdk: docker
 app_port: 8000
@@ -17,8 +17,9 @@ app_port: 8000
 
 **Can an LLM learn to resolve production incidents?**
 Yes. Using GRPO and Curriculum Learning on an Unsloth-optimized Qwen2.5-3B model, our agent successfully learned to identify root causes and resolve incidents autonomously.
+![SRE-Bench Reward Curve](docs/sre_bench_reward_curve.png)
 
-*(See docs/sre_bench_reward_curve.png for our full training visualization quadrant).*
+👉 **[Training Script Link](training/train_grpo.py)**
 
 **Performance on 32 Real Episodes:**
 * **Untrained Baseline:** ~0.05 reward (frequent hallucinations, failed to use tools correctly)
